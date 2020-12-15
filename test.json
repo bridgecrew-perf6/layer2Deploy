@@ -1,0 +1,9 @@
+{
+	"networkId": 2,
+	"walletName": "wallet.dat",
+	"gasPrice": 0,
+	"layer2Contract": "store.avm",
+	"layer2MainNetNode": "http://107.155.55.167:20336",
+	"layer2TestNetNode": "http://152.32.217.204:40336",
+	"layer2RecordInterval": 10
+}
