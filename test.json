@@ -3,7 +3,13 @@
 	"walletName": "wallet.dat",
 	"gasPrice": 0,
 	"layer2Contract": "store.avm",
+	"layer2WitContract": "10c1b2b4e17ea5ed604d6cbff311330dd702bf97",
 	"layer2MainNetNode": "http://107.155.55.167:20336",
 	"layer2TestNetNode": "http://152.32.217.204:40336",
-	"layer2RecordInterval": 10
+	"requestLogServer": "http://172.168.3.44:8112",
+	"layer2RecordInterval": 5,
+	"layer2RecordBatchC": 30,
+	"layer2RetryCount": 3,
+	"enableSendService": true,
+	"restPort": "18082"
 }

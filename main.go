@@ -9,21 +9,20 @@ import (
 	"runtime"
 	"syscall"
 
-	"github.com/ontio/ontology/common/log"
 	"github.com/ontio/layer2deploy/cmd"
+	"github.com/ontio/layer2deploy/core"
 	"github.com/ontio/layer2deploy/layer2config"
+	"github.com/ontio/layer2deploy/restful"
+	"github.com/ontio/ontology/common/log"
 )
 
 func setupAPP() *cli.App {
 	app := cli.NewApp()
 	app.Usage = "layer2deploy CLI"
 	app.Action = startLayer2Deploy
-	app.Version = layer2config.Version
-	app.Copyright = "Copyright in 2018 The Ontology Authors"
+	app.Copyright = "Copyright in 2020 The Ontology Authors"
 	app.Flags = []cli.Flag{
 		cmd.LogLevelFlag,
-		cmd.RestPortFlag,
-		cmd.NetworkIdFlag,
 		cmd.ConfigfileFlag,
 	}
 	app.Before = func(context *cli.Context) error {
@@ -35,19 +34,42 @@ func setupAPP() *cli.App {
 
 func main() {
 	if err := setupAPP().Run(os.Args); err != nil {
-		cmd.PrintErrorMsg(err.Error())
+		log.Errorf("App Get Eorror: %s", err)
 		os.Exit(1)
 	}
 }
 
 func startLayer2Deploy(ctx *cli.Context) {
 	initLog(ctx)
-	if err := initConfig(ctx); err != nil {
-		log.Errorf("[initConfig] error: %s", err)
+
+	cfg, err := cmd.SetLayer2Config(ctx)
+	if err != nil {
+		log.Errorf("startLayer2Deploy N.0 %s", err)
 		return
 	}
-	log.Infof("config: %v\n", layer2config.DefLayer2Config)
-	waitToExit()
+
+	log.Infof("startLayer2Deploy Y.0 Config: %v", *cfg)
+
+	sendService := core.NewSendService(cfg)
+	core.DefSendService = sendService
+
+	core.DefVerifyService.Cfg = cfg
+	restful.NewRouter()
+	startServer(cfg)
+
+	if cfg.EnableSendService {
+		log.Infof("SendService Enabled")
+		go sendService.RepeantSendLogToChain()
+	} else {
+		log.Infof("SendService Disabled")
+	}
+
+	waitToExit(sendService)
+}
+
+func startServer(config *layer2config.Config) {
+	router := restful.NewRouter()
+	go router.Run(":" + config.RestPort)
 }
 
 func initLog(ctx *cli.Context) {
@@ -65,21 +87,18 @@ func getDBPassword() ([]byte, error) {
 	return passwd, nil
 }
 
-func initConfig(ctx *cli.Context) error {
-	//init config
-	return cmd.SetOntologyConfig(ctx)
-}
-
-func waitToExit() {
+func waitToExit(s *core.SendService) {
 	exit := make(chan bool, 0)
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-	go func() {
+	go func(s *core.SendService) {
 		for sig := range sc {
 			log.Infof("saga server received exit signal: %s.", sig.String())
+			s.QuitS <- true
+			s.Wg.Wait()
 			close(exit)
 			break
 		}
-	}()
+	}(s)
 	<-exit
 }

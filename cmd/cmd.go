@@ -15,86 +15,99 @@ import (
 	"os"
 )
 
-func SetOntologyConfig(ctx *cli.Context) error {
+func SetLayer2Config(ctx *cli.Context) (*layer2config.Config, error) {
 	cf := ctx.String(GetFlagName(ConfigfileFlag))
 	if _, err := os.Stat(cf); os.IsNotExist(err) {
 		// if there's no config file, use default config
-		return err
+		return nil, err
 	}
 
 	file, err := os.Open(cf)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer file.Close()
 
 	bs, err := ioutil.ReadAll(file)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cfg := &layer2config.Config{}
 	err = json.Unmarshal(bs, cfg)
 	if err != nil {
-		return err
-	}
-	*layer2config.DefLayer2Config = *cfg
-
-	if layer2config.DefLayer2Config.WalletName == "" || layer2config.DefLayer2Config.Layer2MainNetNode == "" || layer2config.DefLayer2Config.Layer2TestNetNode == "" {
-		return fmt.Errorf("walletName/layer2MainNetAddress/layer2TestNetAddress  is nil")
+		return nil, err
 	}
 
-	wallet, err := ontSdk.OpenWallet(layer2config.DefLayer2Config.WalletName)
+	if cfg.WalletName == "" || cfg.Layer2MainNetNode == "" || cfg.Layer2TestNetNode == "" {
+		return nil, fmt.Errorf("walletName/layer2MainNetAddress/layer2TestNetAddress  is nil")
+	}
+
+	if cfg.RequestLogServer == "" || cfg.Layer2RecordInterval == 0 || cfg.Layer2RetryCount == 0 || cfg.Layer2RecordBatchC == 0 {
+		return nil, fmt.Errorf("RequestLogServer/Layer2RecordInterval/Layer2RetryCount/Layer2RecordBatchC config error")
+	}
+
+	wallet, err := ontSdk.OpenWallet(cfg.WalletName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	passwd, err := password.GetAccountPassword()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	sagaAccount, err := wallet.GetDefaultAccount(passwd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	layer2Sdk := ontSdk.NewLayer2Sdk()
-	switch layer2config.DefLayer2Config.NetWorkId {
+	ontoSdk := ontSdk.NewOntologySdk()
+	switch cfg.NetWorkId {
 	case layer2config.NETWORK_ID_MAIN_NET:
 		log.Infof("currently Main net")
-		layer2Sdk.NewRpcClient().SetAddress(layer2config.DefLayer2Config.Layer2MainNetNode)
+		layer2Sdk.NewRpcClient().SetAddress(cfg.Layer2MainNetNode)
+		ontoSdk.NewRpcClient().SetAddress("http://dappnode3.ont.io:20336")
 	case layer2config.NETWORK_ID_POLARIS_NET:
 		log.Infof("currently test net")
-		layer2Sdk.NewRpcClient().SetAddress(layer2config.DefLayer2Config.Layer2TestNetNode)
+		layer2Sdk.NewRpcClient().SetAddress(cfg.Layer2TestNetNode)
+		ontoSdk.NewRpcClient().SetAddress("http://polaris4.ont.io:20336")
 	case layer2config.NETWORK_ID_SOLO_NET:
 		log.Infof("currently solo net")
 		// solo simulation with test net. but different contract and owner
-		layer2Sdk.NewRpcClient().SetAddress(layer2config.DefLayer2Config.Layer2TestNetNode)
+		layer2Sdk.NewRpcClient().SetAddress(cfg.Layer2TestNetNode)
+		ontoSdk.NewRpcClient().SetAddress("http://polaris4.ont.io:20336")
 	default:
-		return fmt.Errorf("error network id %d", layer2config.DefLayer2Config.NetWorkId)
+		return nil, fmt.Errorf("error network id %d", cfg.NetWorkId)
 	}
 
-	layer2config.DefLayer2Config.Layer2Sdk = layer2Sdk
-	layer2config.DefLayer2Config.AdminAccount = sagaAccount
-	return CheckLayer2InitAddress()
+	cfg.Layer2Sdk = layer2Sdk
+	cfg.OntSdk = ontoSdk
+	cfg.AdminAccount = sagaAccount
+	err = CheckLayer2InitAddress(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
 }
 
-func CheckLayer2InitAddress() error {
-	layer2Sdk := layer2config.DefLayer2Config.Layer2Sdk
+func CheckLayer2InitAddress(cfg *layer2config.Config) error {
+	layer2Sdk := cfg.Layer2Sdk
 	if layer2Sdk == nil {
 		return fmt.Errorf("layer2 sdk should not be nil")
 	}
 
-	if len(layer2config.DefLayer2Config.Layer2Contract) == 0 {
+	if len(cfg.Layer2Contract) == 0 {
 		return fmt.Errorf("layer2 contract address or contract not init")
 	}
 
-	log.Infof("layer2Contract %s", layer2config.DefLayer2Config.Layer2Contract)
+	log.Infof("layer2Contract %s", cfg.Layer2Contract)
 
-	contractAddr, err := common.AddressFromHexString(layer2config.DefLayer2Config.Layer2Contract)
+	contractAddr, err := common.AddressFromHexString(cfg.Layer2Contract)
 	// incase that is a file name.
-	if err != nil || len(layer2config.DefLayer2Config.Layer2Contract) != common.ADDR_LEN*2 {
-		code, err := ioutil.ReadFile(layer2config.DefLayer2Config.Layer2Contract)
+	if err != nil || len(cfg.Layer2Contract) != common.ADDR_LEN*2 {
+		code, err := ioutil.ReadFile(cfg.Layer2Contract)
 		if err != nil {
-			return fmt.Errorf("error in ReadFile: %s, %s\n", layer2config.DefLayer2Config.Layer2Contract, err)
+			return fmt.Errorf("error in ReadFile: %s, %s\n", cfg.Layer2Contract, err)
 		}
 
 		codeHash := common.ToHexString(code)
@@ -105,12 +118,12 @@ func CheckLayer2InitAddress() error {
 
 		payload, err := layer2Sdk.GetSmartContract(contractAddr.ToHexString())
 		if payload == nil || err != nil {
-			txHash, err := layer2Sdk.NeoVM.DeployNeoVMSmartContract(uint64(layer2config.DefLayer2Config.GasPrice), 200000000, layer2config.DefLayer2Config.AdminAccount, true, codeHash, "witness layer2 contract", "1.0", "witness", "email", "desc")
+			txHash, err := layer2Sdk.NeoVM.DeployNeoVMSmartContract(uint64(cfg.GasPrice), 200000000, cfg.AdminAccount, true, codeHash, "witness layer2 contract", "1.0", "witness", "email", "desc")
 			if err != nil {
-				return fmt.Errorf("deploy contract %s err: %s", layer2config.DefLayer2Config.Layer2Contract, err)
+				return fmt.Errorf("deploy contract %s err: %s", cfg.Layer2Contract, err)
 			}
 
-			_, err = common2.GetLayer2EventByTxHash(txHash.ToHexString())
+			_, err = common2.GetLayer2EventByTxHash(txHash.ToHexString(), cfg)
 			if err != nil {
 				return fmt.Errorf("deploy contract failed %s", err)
 			}
@@ -118,10 +131,10 @@ func CheckLayer2InitAddress() error {
 		}
 
 		log.Infof("the contractAddr hexstring is %s", contractAddr.ToHexString())
-		layer2config.DefLayer2Config.Layer2Contract = contractAddr.ToHexString()
+		cfg.Layer2Contract = contractAddr.ToHexString()
 	}
 
-	contractAddr, err = common.AddressFromHexString(layer2config.DefLayer2Config.Layer2Contract)
+	contractAddr, err = common.AddressFromHexString(cfg.Layer2Contract)
 	if err != nil {
 		return err
 	}
@@ -141,7 +154,7 @@ func CheckLayer2InitAddress() error {
 			return fmt.Errorf("error init_status toByteArray %s", err)
 		}
 
-		sagaAddrBase58 := layer2config.DefLayer2Config.AdminAccount.Address.ToBase58()
+		sagaAddrBase58 := cfg.AdminAccount.Address.ToBase58()
 		if len(addrB) != 0 {
 			addrO, err := common.AddressParseFromBytes(addrB)
 			if err != nil {
@@ -155,11 +168,11 @@ func CheckLayer2InitAddress() error {
 			break
 		} else {
 			//log.Infof("start init layer2 addr owner to address %s", sagaAddrBase58)
-			txHash, err := layer2Sdk.NeoVM.InvokeNeoVMContract(uint64(layer2config.DefLayer2Config.GasPrice), 200000, nil, layer2config.DefLayer2Config.AdminAccount, contractAddr, []interface{}{"init", layer2config.DefLayer2Config.AdminAccount.Address})
+			txHash, err := layer2Sdk.NeoVM.InvokeNeoVMContract(uint64(cfg.GasPrice), 200000, nil, cfg.AdminAccount, contractAddr, []interface{}{"init", cfg.AdminAccount.Address})
 			if err != nil {
 				return fmt.Errorf("init layer2 owner err0 %s", err)
 			}
-			_, err = common2.GetLayer2EventByTxHash(txHash.ToHexString())
+			_, err = common2.GetLayer2EventByTxHash(txHash.ToHexString(), cfg)
 			if err != nil {
 				return fmt.Errorf("init layer2 owner err1: %s", err)
 			}
@@ -167,20 +180,15 @@ func CheckLayer2InitAddress() error {
 		}
 	}
 
-	txHash, err := layer2Sdk.NeoVM.InvokeNeoVMContract(uint64(layer2config.DefLayer2Config.GasPrice), 200000, nil, layer2config.DefLayer2Config.AdminAccount, contractAddr, []interface{}{"StoreHash", []interface{}{"6de9439834c9147569741d3c9c9fc010"}})
+	txHash, err := layer2Sdk.NeoVM.InvokeNeoVMContract(uint64(cfg.GasPrice), 200000, nil, cfg.AdminAccount, contractAddr, []interface{}{"StoreHash", []interface{}{"6de9439834c9147569741d3c9c9fc010"}})
 	if err != nil {
 		return fmt.Errorf("StoreUsedNum test failed %s", err)
 	}
 
-	_, err = common2.GetLayer2EventByTxHash(txHash.ToHexString())
+	_, err = common2.GetLayer2EventByTxHash(txHash.ToHexString(), cfg)
 	if err != nil {
 		return fmt.Errorf("init layer2 owner err1: %s", err)
 	}
 	log.Infof("test StoreUsedNum success ")
 	return nil
-}
-
-func PrintErrorMsg(format string, a ...interface{}) {
-	format = fmt.Sprintf("\033[31m[ERROR] %s\033[0m\n", format) //Print error msg with red color
-	fmt.Printf(format, a...)
 }
