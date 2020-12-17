@@ -60,17 +60,18 @@ func (self *SendService) RepeantSendLogToChain() {
 	var count uint64
 	for {
 		atomic.LoadUint32(&self.Enabled)
-		if self.Enabled == 0 {
-			log.Infof("RepeantSendLogToChain Disabled")
-			time.Sleep(time.Second * time.Duration(self.Cfg.Layer2RecordInterval))
-			continue
-		}
 
 		select {
 		case <-self.QuitS:
 			log.Infof("RepeantSendLogToChain get QuitS signal")
 			return
 		default:
+			if self.Enabled == 0 {
+				log.Infof("RepeantSendLogToChain Disabled")
+				time.Sleep(time.Second * time.Duration(self.Cfg.Layer2RecordInterval*10))
+				continue
+			}
+
 			data, err := client.Get(self.Cfg.RequestLogServer)
 			if err != nil {
 				log.Errorf("RepeantSendLogToChain N.1 %s", err)
