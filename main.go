@@ -52,6 +52,7 @@ func startLayer2Deploy(ctx *cli.Context) {
 
 	sendService := core.NewSendService(cfg)
 	core.DefSendService = sendService
+	core.DefVerifyService = core.NewVerifyService(cfg)
 
 	core.DefVerifyService.Cfg = cfg
 	restful.NewRouter()

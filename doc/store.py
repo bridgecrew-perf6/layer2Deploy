@@ -72,7 +72,7 @@ def StoreHash(args):
 
 
 def CheckHashExist(args):
-    if len(args) != 0:
+    if len(args) != 1:
         return False
 
     inputHash = args[0]
